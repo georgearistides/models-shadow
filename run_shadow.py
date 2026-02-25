@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %pip install xgboost lightgbm -q
+# MAGIC %pip install xgboost lightgbm lifelines -q
 
 # COMMAND ----------
 
