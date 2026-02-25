@@ -5,7 +5,7 @@ Importable class that scores loan applications using a point-based rule engine
 derived from validated fraud signal analysis (AUC 0.7316 on test set).
 
 Usage:
-    from scripts.models.fraud_gate import FraudGate
+    from fraud_gate import FraudGate
 
     fg = FraudGate()
     fg.fit(train_df)  # optional — calibrate thresholds from data
@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import joblib
 import numpy as np
-from scripts.models.model_utils import (
+from model_utils import (
     _is_missing, _safe_float, _safe_str,
     BAD_STATES, GOOD_STATES, EXCLUDE_STATES,
 )
@@ -1576,7 +1576,7 @@ class FraudGate:
                 logger.debug("Failed to load %s: %s", entity_fg, e)
 
         # 3. Entity graph parquet in ../data/
-        parquet_path = model_dir.parent / "data" / "entity_graph_cross.parquet"
+        parquet_path = model_dir / "entity_graph_cross.parquet"
         if parquet_path.exists():
             lookup = self._auto_load_entity_graph_from_parquet(parquet_path)
             if lookup:

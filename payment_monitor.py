@@ -13,7 +13,7 @@ Key finding: NSF patterns are the strongest early-warning signal for loan defaul
 - 9-flag composite score achieves AUC 0.844 (test) / 0.950 (train)
 
 Usage:
-    from scripts.models.payment_monitor import PaymentMonitor
+    from payment_monitor import PaymentMonitor
 
     pm = PaymentMonitor()
     pm.fit(df)
@@ -50,7 +50,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from scripts.models.model_utils import _is_missing, _safe_float, BAD_STATES
+from model_utils import _is_missing, _safe_float, BAD_STATES
 
 logger = logging.getLogger(__name__)
 

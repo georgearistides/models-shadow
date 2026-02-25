@@ -43,13 +43,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
-# Ensure project root is on sys.path
+# Project root (flat layout: all files in same directory)
 # ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_PROJECT_ROOT = Path(__file__).resolve().parent
 
-from scripts.models.model_utils import BAD_STATES, EXCLUDE_STATES, SPLIT_DATE
+from model_utils import BAD_STATES, EXCLUDE_STATES, SPLIT_DATE
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +134,7 @@ def _load_shadow_scores(path: Path) -> pd.DataFrame:
 
 def _load_payment_data(project_root: Path) -> Optional[pd.DataFrame]:
     """Load payment features if available."""
-    payment_path = project_root / "data" / "payment_features.parquet"
+    payment_path = project_root / "payment_features.parquet"
     if payment_path.exists():
         try:
             return pd.read_parquet(payment_path)
@@ -148,7 +146,7 @@ def _load_payment_data(project_root: Path) -> Optional[pd.DataFrame]:
 def _load_pipeline(model_dir: Path):
     """Load the pipeline from model directory. Returns None on failure."""
     try:
-        from scripts.models.pipeline import Pipeline
+        from pipeline import Pipeline
         pipeline = Pipeline.load(model_dir)
         return pipeline
     except Exception as e:
@@ -163,7 +161,7 @@ def _load_payment_monitor(model_dir: Path):
         logger.info("No payment_monitor.joblib found in %s", model_dir)
         return None
     try:
-        from scripts.models.payment_monitor import PaymentMonitor
+        from payment_monitor import PaymentMonitor
         return PaymentMonitor.load(monitor_path)
     except Exception as e:
         logger.warning("Failed to load PaymentMonitor: %s", e)
@@ -186,7 +184,7 @@ def _run_drift_checks(
     calibration, grade_shift, overall_status, alerts, metadata.
     """
     try:
-        from scripts.models.drift_monitor import DriftMonitor
+        from drift_monitor import DriftMonitor
     except ImportError as e:
         return {
             "error": f"Could not import DriftMonitor: {e}",
@@ -195,7 +193,7 @@ def _run_drift_checks(
         }
 
     # Load training data for reference baselines
-    data_path = project_root / "data" / "master_features.parquet"
+    data_path = project_root / "master_features.parquet"
     if not data_path.exists():
         return {
             "error": f"Training data not found at {data_path}",
@@ -204,7 +202,7 @@ def _run_drift_checks(
         }
 
     try:
-        model_dir = project_root / "models"
+        model_dir = project_root
         monitor = DriftMonitor.from_pipeline(str(model_dir), data_path=str(data_path))
     except Exception as e:
         return {
@@ -222,7 +220,7 @@ def _run_drift_checks(
     current_df["signing_date"] = pd.to_datetime(current_df["signing_date"])
 
     # Join entity graph if available
-    entity_path = project_root / "data" / "entity_graph_cross.parquet"
+    entity_path = project_root / "entity_graph_cross.parquet"
     if entity_path.exists():
         entity_df = pd.read_parquet(entity_path)
         entity_cols = ['application_id', 'has_prior_bad', 'is_repeat', 'is_cross_entity',
@@ -424,7 +422,7 @@ def _run_score_drift_from_csv(
     This is a lightweight alternative to full DriftMonitor when we only
     have pre-computed scores (not raw features + pipeline).
     """
-    from scripts.models.model_monitor import compute_psi_continuous, compute_psi_categorical
+    from model_monitor import compute_psi_continuous, compute_psi_categorical
 
     result = {
         "score_psi": {},
@@ -635,7 +633,7 @@ def _run_score_drift_from_csv(
     # --- Operational Drift (circuit breakers) ---
     # Uses the same DriftMonitor.check_operational_drift() logic
     try:
-        from scripts.models.drift_monitor import DriftMonitor, OPERATIONAL_THRESHOLDS
+        from drift_monitor import DriftMonitor, OPERATIONAL_THRESHOLDS
 
         # Create a lightweight DriftMonitor just for operational checks.
         # We don't need a full pipeline — just the check_operational_drift method.
@@ -947,7 +945,7 @@ def run_monitoring(
         if not model_path.is_absolute():
             model_path = project_root / model_path
     else:
-        model_path = project_root / "models"
+        model_path = project_root
 
     # --- Load shadow scores ---
     scores_df = None

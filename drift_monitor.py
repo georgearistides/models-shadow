@@ -20,7 +20,7 @@ Alert Thresholds:
   - Calibration ratio outside [0.8, 1.2] = WARNING, outside [0.6, 1.5] = CRITICAL
 
 Usage (as module):
-    from scripts.models.drift_monitor import DriftMonitor
+    from drift_monitor import DriftMonitor
     monitor = DriftMonitor.from_pipeline("models/")
     report = monitor.run(current_data, outcomes=None)
     report.print_summary()
@@ -42,17 +42,15 @@ from typing import Any, Dict, List, Optional, Union
 
 from sklearn.metrics import roc_auc_score, brier_score_loss
 
-# Ensure project root is on sys.path for both module and CLI usage
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+# Project root (flat layout: all files in same directory)
+_PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Reuse PSI functions from the existing ModelMonitor
-from scripts.models.model_monitor import (
+from model_monitor import (
     compute_psi_continuous,
     compute_psi_categorical,
 )
-from scripts.models.model_utils import (
+from model_utils import (
     BAD_STATES,
     EXCLUDE_STATES,
     SPLIT_DATE,
@@ -556,22 +554,13 @@ class DriftMonitor:
         DriftMonitor instance ready for .run() calls.
         """
         model_dir = Path(model_dir)
-
-        # Resolve project root
-        if model_dir.name == "models":
-            project_root = model_dir.parent
-        else:
-            project_root = model_dir.parent
+        project_root = model_dir
 
         if data_path is None:
-            data_path = project_root / "data" / "master_features.parquet"
+            data_path = project_root / "master_features.parquet"
         data_path = Path(data_path)
 
-        # Ensure project root is on sys.path
-        if str(project_root) not in sys.path:
-            sys.path.insert(0, str(project_root))
-
-        from scripts.models.pipeline import Pipeline
+        from pipeline import Pipeline
 
         # Load pipeline
         logger.info("Loading pipeline from %s", model_dir)
@@ -594,7 +583,7 @@ class DriftMonitor:
             df["fico"] = df["experian_FICO_SCORE"]
 
         # Join entity graph if available
-        entity_path = project_root / "data" / "entity_graph_cross.parquet"
+        entity_path = project_root / "entity_graph_cross.parquet"
         if entity_path.exists():
             entity_df = pd.read_parquet(entity_path)
             entity_cols = ['application_id', 'has_prior_bad', 'is_repeat', 'is_cross_entity',
@@ -762,8 +751,8 @@ class DriftMonitor:
         df["signing_date"] = pd.to_datetime(df["signing_date"])
 
         # Join entity graph if available
-        project_root = Path(data_path).parent.parent
-        entity_path = project_root / "data" / "entity_graph_cross.parquet"
+        project_root = Path(data_path).parent
+        entity_path = project_root / "entity_graph_cross.parquet"
         if entity_path.exists():
             entity_df = pd.read_parquet(entity_path)
             entity_cols = ['application_id', 'has_prior_bad', 'is_repeat', 'is_cross_entity',
@@ -1405,7 +1394,7 @@ def main():
     args = parser.parse_args()
 
     # Resolve paths relative to project root
-    project_root = Path(__file__).resolve().parent.parent.parent
+    project_root = Path(__file__).resolve().parent
     data_path = Path(args.data)
     if not data_path.is_absolute():
         data_path = project_root / data_path

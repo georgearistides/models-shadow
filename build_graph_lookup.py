@@ -37,9 +37,9 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_PATH = PROJECT_ROOT / "data" / "master_features.parquet"
-DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "graph_lookup.json"
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_PATH = PROJECT_ROOT / "master_features.parquet"
+DEFAULT_OUTPUT = PROJECT_ROOT / "graph_lookup.json"
 
 BAD_STATES = {"CHARGE_OFF", "DEFAULT", "WORKOUT", "PRE_DEFAULT", "TECHNICAL_DEFAULT"}
 GOOD_STATES = {"PAID_CLOSED", "PAID", "OVER_PAID"}

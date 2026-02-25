@@ -11,8 +11,8 @@ from sklearn.metrics import (
 )
 from sklearn.calibration import calibration_curve
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
-RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+DATA_DIR = Path(__file__).parent  # flat layout: data files alongside code
+RESULTS_DIR = Path(__file__).parent / "results"
 SPLIT_DATE = pd.Timestamp("2025-07-01")
 MIN_SEASONING_DAYS = 180  # 6 months for right-censoring
 

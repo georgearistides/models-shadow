@@ -16,7 +16,7 @@ available for comparison, but the overall decision reflects the cascade logic:
   4. Decision logic combines all signals
 
 Usage:
-    from scripts.models.pipeline import Pipeline
+    from pipeline import Pipeline
 
     # --- Origination scoring ---
     p = Pipeline()
@@ -40,14 +40,15 @@ import math
 import numpy as np
 import pandas as pd
 import joblib
+import _compat  # noqa: F401 — register scripts.models shim for joblib unpickling
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 
-from scripts.models.fraud_gate import FraudGate
-from scripts.models.default_scorecard import DefaultScorecard
-from scripts.models.credit_grader import CreditGrader
-from scripts.models.payment_monitor import PaymentMonitor
+from fraud_gate import FraudGate
+from default_scorecard import DefaultScorecard
+from credit_grader import CreditGrader
+from payment_monitor import PaymentMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -1439,7 +1440,7 @@ class Pipeline:
         survival_path = directory / "survival_scorer.joblib"
         if survival_path.exists():
             try:
-                from scripts.models.survival_scorer import SurvivalScorer
+                from survival_scorer import SurvivalScorer
                 pipeline.survival_scorer = SurvivalScorer.load(str(survival_path))
                 logger.info(
                     "Loaded SurvivalScorer from %s (survival enrichment enabled)",

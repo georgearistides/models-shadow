@@ -6,7 +6,7 @@ Combines three sub-models (WoE Scorecard, Rule Engine, XGBoost) into a
 calibrated probability-of-default (PD) estimate with a 300-850 score mapping.
 
 Usage:
-    from scripts.models.default_scorecard import DefaultScorecard
+    from default_scorecard import DefaultScorecard
 
     ds = DefaultScorecard()
     ds.fit(train_df, y_col="is_bad")
@@ -29,7 +29,7 @@ import warnings
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import roc_auc_score, brier_score_loss, roc_curve
-from scripts.models.model_utils import PARTNER_ENCODING
+from model_utils import PARTNER_ENCODING
 
 logger = logging.getLogger(__name__)
 

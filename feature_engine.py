@@ -11,7 +11,7 @@ import logging
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from scripts.models.model_utils import (
+from model_utils import (
     load_master, load_default_model, load_funnel,
     prepare_credit_data, BAD_STATES, GOOD_STATES, ACTIVE_STATES, EXCLUDE_STATES,
     SPLIT_DATE, MIN_SEASONING_DAYS, PARTNER_ENCODING

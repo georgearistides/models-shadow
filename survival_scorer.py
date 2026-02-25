@@ -6,7 +6,7 @@ Predicts probability of default within T months using Cox Proportional Hazards.
 Complements the binary DefaultScorecard with temporal risk profiles.
 
 Usage:
-    from scripts.models.survival_scorer import SurvivalScorer
+    from survival_scorer import SurvivalScorer
 
     scorer = SurvivalScorer()
     df = pd.read_parquet("data/master_features.parquet")
@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Union
 from lifelines import CoxPHFitter, KaplanMeierFitter
 from lifelines.utils import concordance_index
 
-from scripts.models.model_utils import (
+from model_utils import (
     BAD_STATES, GOOD_STATES, ACTIVE_STATES, EXCLUDE_STATES,
     SPLIT_DATE, PARTNER_ENCODING, _safe_float, _is_missing,
 )
@@ -914,8 +914,8 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
-    DATA_DIR = Path(__file__).parent.parent.parent / "data"
-    MODELS_DIR = Path(__file__).parent.parent.parent / "models"
+    DATA_DIR = Path(__file__).parent
+    MODELS_DIR = Path(__file__).parent
 
     print("Loading master features...")
     df = pd.read_parquet(DATA_DIR / "master_features.parquet")

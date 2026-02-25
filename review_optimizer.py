@@ -9,7 +9,7 @@ From the A/B simulation results:
   - Goal: rank review-queue loans so reviewers focus on highest-risk ones first
 
 Usage:
-    from scripts.models.review_optimizer import ReviewOptimizer
+    from review_optimizer import ReviewOptimizer
 
     ro = ReviewOptimizer()
     prioritized = ro.prioritize(review_results)

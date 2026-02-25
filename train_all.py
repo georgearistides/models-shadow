@@ -26,22 +26,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("train_all")
 
-# Project paths
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
-MODELS_DIR = PROJECT_ROOT / "models"
+# Project paths (flat layout: all files in same directory)
+PROJECT_ROOT = Path(__file__).parent
+DATA_DIR = PROJECT_ROOT  # parquet files alongside code
+MODELS_DIR = PROJECT_ROOT  # joblib files alongside code
 
-# Add project root to path so imports work
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from scripts.models.fraud_gate import FraudGate
-from scripts.models.default_scorecard import DefaultScorecard
-from scripts.models.credit_grader import CreditGrader
-from scripts.models.pipeline import Pipeline
-from scripts.models.model_utils import (
+from fraud_gate import FraudGate
+from default_scorecard import DefaultScorecard
+from credit_grader import CreditGrader
+from pipeline import Pipeline
+from model_utils import (
     BAD_STATES, GOOD_STATES, EXCLUDE_STATES, SPLIT_DATE, PARTNER_ENCODING,
 )
-from scripts.models.feature_engine import validate_no_leaky_features
+from feature_engine import validate_no_leaky_features
 
 
 # =============================================================================

@@ -327,7 +327,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Loading pipeline from %s ...", MODEL_DIR)
     try:
-        from scripts.models.pipeline import Pipeline
+        from pipeline import Pipeline
 
         state.pipeline = Pipeline.load(MODEL_DIR)
         state.startup_time = time.time()
@@ -591,7 +591,7 @@ async def monitor_loan(body: MonitorRequest, request: Request):
 )
 async def health_check():
     """Return basic health status, uptime, and prediction count."""
-    from scripts.models.pipeline import VERSION as PIPELINE_VERSION
+    from pipeline import VERSION as PIPELINE_VERSION
 
     pipeline_loaded = state.pipeline is not None
     uptime = time.time() - state.startup_time if state.startup_time else 0
@@ -631,7 +631,7 @@ async def health_check():
 )
 async def model_health():
     """Return detailed version and configuration info for each model component."""
-    from scripts.models.pipeline import VERSION as PIPELINE_VERSION
+    from pipeline import VERSION as PIPELINE_VERSION
 
     pipeline = state.pipeline
 
