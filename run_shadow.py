@@ -1,4 +1,8 @@
 # Databricks notebook source
+# MAGIC %pip install xgboost lightgbm -q
+
+# COMMAND ----------
+
 """
 run_shadow.py — One-click shadow scoring notebook for Databricks.
 
