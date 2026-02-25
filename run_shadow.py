@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Databricks notebook source
 """
 run_shadow.py — One-click shadow scoring notebook for Databricks.
 
