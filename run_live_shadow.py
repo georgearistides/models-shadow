@@ -237,27 +237,43 @@ n = len(scored)
 # Compute metrics if enough data with both classes
 auc_val = None
 ap_val = None
+mcc_val = None
 kappa_val = None
 kappa_grade_val = None
+f2_val = None
+ece_val = None
 lift_top_val = None
 if n > 50 and scored["is_bad"].nunique() > 1:
     try:
-        from sklearn.metrics import roc_auc_score, average_precision_score, cohen_kappa_score
+        from sklearn.metrics import (
+            roc_auc_score, average_precision_score, cohen_kappa_score,
+            matthews_corrcoef, fbeta_score, brier_score_loss
+        )
 
         y_true = scored["is_bad"].values
         y_pd = scored["shadow_pd"].values
+        shadow_flag = (scored["shadow_decision"].isin(["Review", "Decline"])).astype(int).values
 
-        # AUC
+        # Ranking metrics
         auc_val = round(float(roc_auc_score(y_true, y_pd)), 4)
-
-        # Average Precision (better than AUC for imbalanced data)
         ap_val = round(float(average_precision_score(y_true, y_pd)), 4)
 
-        # Cohen's Kappa: pipeline flag (review+decline) vs actual default
-        shadow_flag = (scored["shadow_decision"].isin(["Review", "Decline"])).astype(int).values
+        # Decision metrics (flag = review + decline)
+        mcc_val = round(float(matthews_corrcoef(y_true, shadow_flag)), 4)
         kappa_val = round(float(cohen_kappa_score(y_true, shadow_flag)), 4)
+        f2_val = round(float(fbeta_score(y_true, shadow_flag, beta=2, zero_division=0)), 4)
 
-        # Cohen's Kappa: shadow grade vs production grade
+        # Calibration: Expected Calibration Error
+        n_bins = 10
+        bin_edges = np.linspace(0, 1, n_bins + 1)
+        ece_sum = 0.0
+        for i in range(n_bins):
+            mask = (y_pd >= bin_edges[i]) & (y_pd < bin_edges[i + 1])
+            if mask.sum() > 0:
+                ece_sum += (mask.sum() / len(y_true)) * abs(y_true[mask].mean() - y_pd[mask].mean())
+        ece_val = round(ece_sum, 4)
+
+        # Shadow grade vs production grade
         if "prod_grade_letter" in scored.columns:
             valid = scored.dropna(subset=["shadow_grade", "prod_grade_letter"])
             if len(valid) > 50:
@@ -285,8 +301,11 @@ log_entry = {
     "new_bad_rate": round(n_bad / max(n, 1), 4),
     "auc_this_batch": auc_val,
     "avg_precision_this_batch": ap_val,
+    "mcc_this_batch": mcc_val,
     "kappa_decision_vs_default": kappa_val,
     "kappa_shadow_vs_prod_grade": kappa_grade_val,
+    "f2_this_batch": f2_val,
+    "ece_this_batch": ece_val,
     "lift_top_decile": lift_top_val,
     "decisions_approve": int((scored["shadow_decision"] == "Approve").sum()),
     "decisions_review": int((scored["shadow_decision"] == "Review").sum()),
@@ -316,8 +335,14 @@ if ap_val:
     base_rate = round(n_bad / max(n, 1), 4)
     ap_lift = round(ap_val / max(base_rate, 0.001), 1)
     print(f"  Avg Precision:     {ap_val}  ({ap_lift}x random)")
+if mcc_val is not None:
+    print(f"  MCC:               {mcc_val}")
+if f2_val is not None:
+    print(f"  F2-Score:          {f2_val}")
 if kappa_val is not None:
     print(f"  Kappa (decision):  {kappa_val}")
+if ece_val is not None:
+    print(f"  ECE (calibration): {ece_val}")
 if kappa_grade_val is not None:
     print(f"  Kappa (vs prod):   {kappa_grade_val}")
 if lift_top_val:
