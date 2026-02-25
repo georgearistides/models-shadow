@@ -29,9 +29,13 @@ from sklearn.metrics import roc_auc_score, brier_score_loss, roc_curve
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ---------------------------------------------------------------------------
-# Setup paths
+# Setup paths — works both locally (__file__ exists) and on Databricks (it doesn't)
 # ---------------------------------------------------------------------------
-REPO_DIR = Path(__file__).resolve().parent
+try:
+    REPO_DIR = Path(__file__).resolve().parent
+except NameError:
+    # Databricks notebook: __file__ is not defined
+    REPO_DIR = Path("/Workspace/Repos/george@jaris.io/models-shadow")
 sys.path.insert(0, str(REPO_DIR))
 
 from pipeline import Pipeline
