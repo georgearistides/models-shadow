@@ -206,14 +206,40 @@ scored["fico"] = df["experian_FICO_SCORE"].values if "experian_FICO_SCORE" in df
 scored["qi"] = df["shop_qi"].values if "shop_qi" in df.columns else None
 scored["partner"] = df["partner"].values if "partner" in df.columns else None
 
-# Shadow scores
-scored["shadow_decision"] = results["decision"].apply(
+# Shadow scores (original pipeline cascade)
+scored["shadow_decision_v1"] = results["decision"].apply(
     lambda d: d.capitalize() if isinstance(d, str) else d).values
 scored["shadow_fraud_score"] = results["fraud_score"].values.astype(float)
 scored["shadow_fraud_decision"] = results["fraud_decision"].values
 scored["shadow_pd"] = results["pd"].values.astype(float)
+scored["shadow_woe_pd"] = results["woe_pd"].values.astype(float) if "woe_pd" in results.columns else 0.0
+scored["shadow_xgb_pd"] = results["xgb_pd"].values.astype(float) if "xgb_pd" in results.columns else 0.0
 scored["shadow_grade"] = results["grade"].values
 scored["shadow_pricing_tier"] = results["pricing_tier"].values.astype(float)
+
+# Optimized decision (FICO-conditional combined score, from Ralph loop 3)
+try:
+    from decision_config import compute_combined_score, should_flag, get_fico_bucket, FICO_THRESHOLDS
+    fico_vals = df["experian_FICO_SCORE"].values if "experian_FICO_SCORE" in df.columns else np.full(len(df), 650.0)
+    woe_vals = results["woe_pd"].values.astype(float) if "woe_pd" in results.columns else results["pd"].values.astype(float)
+    rule_vals = results["rule_pd"].values.astype(float) if "rule_pd" in results.columns else results["pd"].values.astype(float)
+    xgb_vals = results["xgb_pd"].values.astype(float) if "xgb_pd" in results.columns else results["pd"].values.astype(float)
+    fraud_vals = results["fraud_score"].values.astype(float)
+
+    combined_scores = np.array([
+        compute_combined_score(w, r, x, f)
+        for w, r, x, f in zip(woe_vals, rule_vals, xgb_vals, fraud_vals)
+    ])
+    optimized_flags = np.array([
+        should_flag(w, r, x, f, fi)
+        for w, r, x, f, fi in zip(woe_vals, rule_vals, xgb_vals, fraud_vals, fico_vals)
+    ])
+    scored["shadow_combined_score"] = combined_scores
+    scored["shadow_decision"] = np.where(optimized_flags, "Flag", "Approve")
+except Exception as e:
+    print(f"[{RUN_ID}] WARNING: Optimized decision failed ({e}), using v1 cascade")
+    scored["shadow_combined_score"] = scored["shadow_pd"]
+    scored["shadow_decision"] = scored["shadow_decision_v1"]
 
 # Production reference
 scored["prod_grade"] = df["prod_grade"].values
@@ -308,8 +334,10 @@ log_entry = {
     "ece_this_batch": ece_val,
     "lift_top_decile": lift_top_val,
     "decisions_approve": int((scored["shadow_decision"] == "Approve").sum()),
-    "decisions_review": int((scored["shadow_decision"] == "Review").sum()),
-    "decisions_decline": int((scored["shadow_decision"] == "Decline").sum()),
+    "decisions_flag": int((scored["shadow_decision"] == "Flag").sum()),
+    "decisions_v1_approve": int((scored["shadow_decision_v1"] == "Approve").sum()),
+    "decisions_v1_review": int((scored["shadow_decision_v1"] == "Review").sum()),
+    "decisions_v1_decline": int((scored["shadow_decision_v1"] == "Decline").sum()),
     "status": "OK",
 }
 
@@ -324,9 +352,9 @@ print(f"  SHADOW MICRO-BATCH COMPLETE — {RUN_ID}")
 print(f"{'=' * 60}")
 print(f"  New applications scored: {n:,}")
 print(f"  Cumulative scored:       {len(scored_ids) + n:,}")
-print(f"  Decisions: Approve={log_entry['decisions_approve']}, "
-      f"Review={log_entry['decisions_review']}, "
-      f"Decline={log_entry['decisions_decline']}")
+print(f"  Optimized: Approve={log_entry['decisions_approve']}, Flag={log_entry['decisions_flag']}")
+print(f"  Original:  Approve={log_entry['decisions_v1_approve']}, "
+      f"Review={log_entry['decisions_v1_review']}, Decline={log_entry['decisions_v1_decline']}")
 if n_bad > 0:
     print(f"  Bad rate (this batch): {n_bad/n:.1%}")
 if auc_val:
