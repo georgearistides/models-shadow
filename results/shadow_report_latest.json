@@ -1,0 +1,129 @@
+{
+  "run_date": "2026-02-25",
+  "run_timestamp": "2026-02-25T12:11:28.495738",
+  "pipeline": "Pipeline(fitted, fraud=FraudGate(profile='moderate', review=25, reject=70, fitted, graph=9983 entries), default=DefaultScorecard(fitted, woe_feats=12, xgb_feats=20, blend={'woe': 0.25, 'rule': 0.25, 'xgb': 0.5}), grader=CreditGrader(scheme='optimal_iv', grades=['A', 'B', 'C', 'D', 'E'], boundaries=[0.0620, 0.0621, 0.1077, 0.1892]), monitor=loaded, survival=loaded)",
+  "data": {
+    "total_loans": 14034,
+    "train_loans": 10671,
+    "test_loans": 3363,
+    "total_bads": 1287,
+    "bad_rate": 0.0917,
+    "date_range": "2021-12-15 00:00:00 to 2026-02-21 00:00:00"
+  },
+  "decisions": {
+    "Approve": {
+      "count": 6752,
+      "pct": 0.4811,
+      "bad_rate": 0.0459,
+      "bads": 310
+    },
+    "Review": {
+      "count": 6478,
+      "pct": 0.4616,
+      "bad_rate": 0.1025,
+      "bads": 664
+    },
+    "Decline": {
+      "count": 804,
+      "pct": 0.0573,
+      "bad_rate": 0.3893,
+      "bads": 313
+    }
+  },
+  "model_performance": {
+    "fraud_gate": {
+      "auc": 0.6538,
+      "gini": 0.3075
+    },
+    "default_blend": {
+      "auc": 0.6484,
+      "gini": 0.2967,
+      "brier": 0.0611,
+      "ks": 0.2214
+    },
+    "woe": {
+      "auc": 0.6221,
+      "gini": 0.2442
+    },
+    "rule": {
+      "auc": 0.6264,
+      "gini": 0.2529
+    },
+    "xgb": {
+      "auc": 0.6466,
+      "gini": 0.2932
+    },
+    "pricing_tier": {
+      "auc": 0.634,
+      "gini": 0.2679
+    },
+    "calibration": {
+      "predicted_mean_pd": 0.087,
+      "actual_bad_rate": 0.0663,
+      "ratio": 1.3115
+    },
+    "test_n": 3363,
+    "test_bads": 223
+  },
+  "grades": {
+    "A": {
+      "count": 2800,
+      "pct": 0.1995,
+      "bad_rate": 0.0307,
+      "bads": 86,
+      "mean_pd": 0.0353
+    },
+    "B": {
+      "count": 1279,
+      "pct": 0.0911,
+      "bad_rate": 0.0352,
+      "bads": 45,
+      "mean_pd": 0.062
+    },
+    "C": {
+      "count": 4625,
+      "pct": 0.3296,
+      "bad_rate": 0.0735,
+      "bads": 340,
+      "mean_pd": 0.0709
+    },
+    "D": {
+      "count": 4753,
+      "pct": 0.3387,
+      "bad_rate": 0.1323,
+      "bads": 629,
+      "mean_pd": 0.1218
+    },
+    "E": {
+      "count": 577,
+      "pct": 0.0411,
+      "bad_rate": 0.3241,
+      "bads": 187,
+      "mean_pd": 0.2095
+    }
+  },
+  "fraud_gate": {
+    "pass": {
+      "count": 6806,
+      "pct": 0.485,
+      "bad_rate": 0.0473
+    },
+    "review": {
+      "count": 6572,
+      "pct": 0.4683,
+      "bad_rate": 0.1035
+    },
+    "decline": {
+      "count": 656,
+      "pct": 0.0467,
+      "bad_rate": 0.4345
+    }
+  },
+  "production_comparison": {
+    "grade_agreement_rate": 0.4157,
+    "n_compared": 14034,
+    "would_decline": 804,
+    "would_catch_defaults": 313,
+    "default_capture_rate": 0.2432
+  }
+}
