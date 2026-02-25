@@ -1,5 +1,9 @@
 # Databricks notebook source
-# MAGIC %pip install xgboost lightgbm lifelines -q
+# MAGIC %pip install xgboost lightgbm lifelines "scikit-learn>=1.8" -q
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
