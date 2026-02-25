@@ -234,12 +234,44 @@ print(f"[{RUN_ID}] Wrote {len(scored):,} rows to {SCORES_TABLE}")
 n_bad = int(scored["is_bad"].sum())
 n = len(scored)
 
-# Quick AUC if enough data
+# Compute metrics if enough data with both classes
 auc_val = None
+ap_val = None
+kappa_val = None
+kappa_grade_val = None
+lift_top_val = None
 if n > 50 and scored["is_bad"].nunique() > 1:
     try:
-        from sklearn.metrics import roc_auc_score
-        auc_val = round(float(roc_auc_score(scored["is_bad"].values, scored["shadow_pd"].values)), 4)
+        from sklearn.metrics import roc_auc_score, average_precision_score, cohen_kappa_score
+
+        y_true = scored["is_bad"].values
+        y_pd = scored["shadow_pd"].values
+
+        # AUC
+        auc_val = round(float(roc_auc_score(y_true, y_pd)), 4)
+
+        # Average Precision (better than AUC for imbalanced data)
+        ap_val = round(float(average_precision_score(y_true, y_pd)), 4)
+
+        # Cohen's Kappa: pipeline flag (review+decline) vs actual default
+        shadow_flag = (scored["shadow_decision"].isin(["Review", "Decline"])).astype(int).values
+        kappa_val = round(float(cohen_kappa_score(y_true, shadow_flag)), 4)
+
+        # Cohen's Kappa: shadow grade vs production grade
+        if "prod_grade_letter" in scored.columns:
+            valid = scored.dropna(subset=["shadow_grade", "prod_grade_letter"])
+            if len(valid) > 50:
+                kappa_grade_val = round(float(cohen_kappa_score(
+                    valid["prod_grade_letter"].values,
+                    valid["shadow_grade"].values
+                )), 4)
+
+        # Lift at top decile
+        df_lift = pd.DataFrame({"y": y_true, "pd": y_pd})
+        df_lift["decile"] = pd.qcut(df_lift["pd"], 10, labels=False, duplicates="drop")
+        top_dec = df_lift[df_lift["decile"] == df_lift["decile"].max()]
+        if len(top_dec) > 0 and y_true.mean() > 0:
+            lift_top_val = round(float(top_dec["y"].mean() / y_true.mean()), 2)
     except Exception:
         pass
 
@@ -252,6 +284,10 @@ log_entry = {
     "new_bads": n_bad,
     "new_bad_rate": round(n_bad / max(n, 1), 4),
     "auc_this_batch": auc_val,
+    "avg_precision_this_batch": ap_val,
+    "kappa_decision_vs_default": kappa_val,
+    "kappa_shadow_vs_prod_grade": kappa_grade_val,
+    "lift_top_decile": lift_top_val,
     "decisions_approve": int((scored["shadow_decision"] == "Approve").sum()),
     "decisions_review": int((scored["shadow_decision"] == "Review").sum()),
     "decisions_decline": int((scored["shadow_decision"] == "Decline").sum()),
@@ -275,7 +311,17 @@ print(f"  Decisions: Approve={log_entry['decisions_approve']}, "
 if n_bad > 0:
     print(f"  Bad rate (this batch): {n_bad/n:.1%}")
 if auc_val:
-    print(f"  AUC (this batch): {auc_val}")
+    print(f"  AUC:               {auc_val}")
+if ap_val:
+    base_rate = round(n_bad / max(n, 1), 4)
+    ap_lift = round(ap_val / max(base_rate, 0.001), 1)
+    print(f"  Avg Precision:     {ap_val}  ({ap_lift}x random)")
+if kappa_val is not None:
+    print(f"  Kappa (decision):  {kappa_val}")
+if kappa_grade_val is not None:
+    print(f"  Kappa (vs prod):   {kappa_grade_val}")
+if lift_top_val:
+    print(f"  Lift @ top decile: {lift_top_val}x")
 print(f"  Results in: {SCORES_TABLE}")
 print(f"  Log in:     {LOG_TABLE}")
 print(f"{'=' * 60}")
