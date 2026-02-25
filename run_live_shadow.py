@@ -99,7 +99,7 @@ SELECT
     CAST(ccs.payment_amount_monthly_total AS DOUBLE) as mopmt,
     DATEDIFF(l.signing_date, ccs.tradelines_oldest_date) as crhist,
     COALESCE(q.qi, 'MISSING') as shop_qi,
-    l.grade as prod_grade
+    o.grade as prod_grade
 FROM gold_prod.analytics.loan_databricks l
 LEFT JOIN gold_prod.analytics.loan_offers_databricks o
     ON l.application_id = o.application_id
