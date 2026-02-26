@@ -378,3 +378,104 @@ if lift_top_val:
 print(f"  Results in: {SCORES_TABLE}")
 print(f"  Log in:     {LOG_TABLE}")
 print(f"{'=' * 60}")
+
+# ---------------------------------------------------------------------------
+# 7. Vintage Performance Tracking (safe — cannot break scoring above)
+# ---------------------------------------------------------------------------
+# Re-checks current loan states for all previously scored loans.
+# Tracks state transitions, early defaults, and DWOP by shadow grade.
+# Writes to george_sandbox.shadow_vintage for ongoing monitoring.
+
+VINTAGE_TABLE = f"{SHADOW_CATALOG}.{SHADOW_SCHEMA}.shadow_vintage"
+
+try:
+    print(f"\n[{RUN_ID}] Running vintage performance check...")
+
+    # Get current states for all scored loans
+    vintage_query = f"""
+    SELECT
+        s.application_id,
+        s.shadow_grade,
+        s.shadow_pd,
+        s.shadow_decision,
+        s.shadow_fraud_score,
+        s.signing_date as original_signing_date,
+        s.loan_state as state_at_scoring,
+        s.is_bad as was_bad_at_scoring,
+        s.prod_grade,
+        s.fico,
+        s.qi,
+        l.state as current_state,
+        CASE WHEN l.state IN ('CHARGE_OFF','DEFAULT','WORKOUT','PRE_DEFAULT','TECHNICAL_DEFAULT')
+             THEN 1 ELSE 0 END as is_bad_now,
+        DATEDIFF(CURRENT_DATE(), l.signing_date) as age_days,
+        COALESCE(d.dwop, 0) as dwop,
+        CASE WHEN l.state != s.loan_state THEN 1 ELSE 0 END as state_changed,
+        CASE WHEN l.state IN ('CHARGE_OFF','DEFAULT','WORKOUT','PRE_DEFAULT','TECHNICAL_DEFAULT')
+              AND DATEDIFF(l.updated_at, l.signing_date) <= 90
+             THEN 1 ELSE 0 END as early_default_90d,
+        CASE WHEN l.state IN ('CHARGE_OFF','DEFAULT','WORKOUT','PRE_DEFAULT','TECHNICAL_DEFAULT')
+              AND DATEDIFF(l.updated_at, l.signing_date) <= 30
+             THEN 1 ELSE 0 END as first_payment_default
+    FROM {SCORES_TABLE} s
+    JOIN gold_prod.analytics.loan_databricks l ON s.application_id = l.application_id
+    LEFT JOIN gold_prod.analytics.days_without_payment_databricks d ON l.short_id = d.short_id
+    """
+    vintage_df = spark.sql(vintage_query).toPandas()
+
+    if len(vintage_df) > 0:
+        # Compute vintage stats by shadow grade
+        vintage_stats = []
+        for grade in sorted(vintage_df["shadow_grade"].dropna().unique()):
+            g = vintage_df[vintage_df["shadow_grade"] == grade]
+            stats = {
+                "run_id": RUN_ID,
+                "run_timestamp": str(RUN_TS),
+                "shadow_grade": grade,
+                "n_loans": len(g),
+                "n_bad_now": int(g["is_bad_now"].sum()),
+                "bad_rate_now": round(float(g["is_bad_now"].mean()), 4),
+                "n_state_changed": int(g["state_changed"].sum()),
+                "n_early_default_90d": int(g["early_default_90d"].sum()),
+                "n_first_payment_default": int(g["first_payment_default"].sum()),
+                "avg_dwop": round(float(g["dwop"].mean()), 1),
+                "max_dwop": int(g["dwop"].max()),
+                "avg_age_days": round(float(g["age_days"].mean()), 0),
+                "avg_pd": round(float(g["shadow_pd"].mean()), 4),
+            }
+            vintage_stats.append(stats)
+
+        # Write vintage stats to Delta
+        vintage_spark = spark.createDataFrame(vintage_stats)
+        vintage_spark.write.mode("append").saveAsTable(VINTAGE_TABLE)
+
+        # Print vintage summary
+        print(f"\n  --- Vintage Performance (current states) ---")
+        print(f"  {'Grade':<7} {'Loans':>6} {'Bad Now':>8} {'Rate':>7} {'DWOP':>5} {'FPD':>4} {'90d':>4} {'Age':>5}")
+        print(f"  {'-----':<7} {'-----':>6} {'-------':>8} {'----':>7} {'----':>5} {'---':>4} {'---':>4} {'---':>5}")
+        total_bad_now = 0
+        total_loans = 0
+        for s in vintage_stats:
+            total_bad_now += s["n_bad_now"]
+            total_loans += s["n_loans"]
+            print(f"  {s['shadow_grade']:<7} {s['n_loans']:>6,} {s['n_bad_now']:>8,} {s['bad_rate_now']:>7.1%} "
+                  f"{s['avg_dwop']:>5.0f} {s['n_first_payment_default']:>4} {s['n_early_default_90d']:>4} "
+                  f"{s['avg_age_days']:>5.0f}d")
+        if total_loans > 0:
+            print(f"  {'TOTAL':<7} {total_loans:>6,} {total_bad_now:>8,} {total_bad_now/total_loans:>7.1%}")
+
+        # Check if bad rates are monotonic by grade (A < B < C < D < E)
+        grade_rates = {s["shadow_grade"]: s["bad_rate_now"] for s in vintage_stats}
+        grade_order = ["A", "B", "C", "D", "E"]
+        rates_in_order = [grade_rates.get(g, 0) for g in grade_order if g in grade_rates]
+        is_monotonic = all(rates_in_order[i] <= rates_in_order[i+1] for i in range(len(rates_in_order)-1))
+        print(f"\n  Grade monotonicity: {'PASS' if is_monotonic else 'FAIL'} "
+              f"({' < '.join(f'{g}={grade_rates.get(g,0):.1%}' for g in grade_order if g in grade_rates)})")
+
+        print(f"  Vintage data in: {VINTAGE_TABLE}")
+    else:
+        print(f"  No vintage data available yet")
+
+except Exception as e:
+    # Vintage tracking is optional — never break the scoring job
+    print(f"[{RUN_ID}] Vintage tracking skipped: {e}")
