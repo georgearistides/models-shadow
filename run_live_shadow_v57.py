@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %pip install "scikit-learn>=1.8" -q
+# MAGIC %pip install xgboost lightgbm lifelines "scikit-learn>=1.8" -q
 
 # COMMAND ----------
 
@@ -8,26 +8,24 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 """
-run_live_shadow.py — Incremental shadow scoring micro-batch (v6.0).
+run_live_shadow.py — Incremental shadow scoring micro-batch.
 
 Runs every 15 minutes via scheduled job. On each run:
 1. Checks which applications have already been scored (from Delta table)
 2. Pulls only NEW applications from Databricks
-3. Scores them through the v6 pipeline (FraudRules → WoE PD → Grader → Decision)
+3. Scores them through the shadow pipeline
 4. Appends results to shadow_scores Delta table
 5. Logs the run
 
-v6.0 changes vs v5.7:
-- WoE-only model (no XGBoost, no Rule Engine, no blend)
-- 6 hard fraud rules (no 24-rule FraudGate)
-- 4 grades A-D (no broken Grade B band)
-- No xgboost/lightgbm/lifelines dependencies
-
 Shadow scores go to: george_sandbox.shadow_scores (Delta table on prod)
 Run log goes to:     george_sandbox.shadow_run_log (Delta table on prod)
+
+These tables are created automatically on first run. Only George has
+write access to george_sandbox. Nothing touches production tables.
 """
 
 import sys
+import json
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -43,7 +41,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 REPO_DIR = Path("/Workspace/Repos/george@jaris.io/models-shadow")
 sys.path.insert(0, str(REPO_DIR))
 
-from pipeline_v6 import PipelineV6
+from pipeline import Pipeline
+from fraud_gate import FraudGate
 from model_utils import BAD_STATES, EXCLUDE_STATES
 
 RUN_TS = datetime.now()
@@ -55,7 +54,7 @@ SHADOW_SCHEMA = "george_sandbox"
 SCORES_TABLE = f"{SHADOW_CATALOG}.{SHADOW_SCHEMA}.shadow_scores"
 LOG_TABLE = f"{SHADOW_CATALOG}.{SHADOW_SCHEMA}.shadow_run_log"
 
-print(f"[{RUN_ID}] Shadow scoring v6.0 micro-batch starting")
+print(f"[{RUN_ID}] Shadow scoring micro-batch starting")
 
 # ---------------------------------------------------------------------------
 # 1. Ensure sandbox schema exists
@@ -70,6 +69,7 @@ try:
     scored_ids = set(already_scored["application_id"].astype(str))
     print(f"[{RUN_ID}] Already scored: {len(scored_ids):,} applications")
 except Exception:
+    # Table doesn't exist yet — first run
     scored_ids = set()
     print(f"[{RUN_ID}] First run — no existing scores")
 
@@ -144,6 +144,7 @@ df = df_all[~df_all["application_id"].astype(str).isin(scored_ids)].copy()
 print(f"[{RUN_ID}] Total in DB: {len(df_all):,}, new to score: {len(df):,}")
 
 if len(df) == 0:
+    # Nothing new — log and exit
     print(f"[{RUN_ID}] No new applications. Done.")
     log_df = spark.createDataFrame([{
         "run_id": RUN_ID,
@@ -161,10 +162,12 @@ if len(df) == 0:
 df["is_bad"] = df["loan_state"].isin(BAD_STATES).astype(int)
 if "shop_qi" in df.columns and "qi" not in df.columns:
     df["qi"] = df["shop_qi"]
+
+# Alias columns for pipeline compatibility
 if "experian_FICO_SCORE" in df.columns and "fico" not in df.columns:
     df["fico"] = df["experian_FICO_SCORE"]
 
-# Load entity graph features
+# Load entity graph
 entity_path = REPO_DIR / "entity_graph_cross.parquet"
 if entity_path.exists():
     entity_df = pd.read_parquet(entity_path)
@@ -176,9 +179,14 @@ if entity_path.exists():
         if col != 'application_id' and col in df.columns:
             df[col] = df[col].fillna(0).astype(int)
 
-# Load v6 pipeline
-print(f"[{RUN_ID}] Loading v6 pipeline...")
-pipeline = PipelineV6.load(str(REPO_DIR))
+# Load pipeline
+print(f"[{RUN_ID}] Loading pipeline...")
+pipeline = Pipeline.load(str(REPO_DIR))
+
+if entity_path.exists():
+    entity_df_lookup = pd.read_parquet(entity_path)
+    graph_lookup = FraudGate.build_graph_lookup(entity_df_lookup, key_col='application_id')
+    pipeline.fraud_gate.set_graph_lookup(graph_lookup, key_col='application_id')
 
 # Score
 print(f"[{RUN_ID}] Scoring {len(df):,} new applications...")
@@ -194,17 +202,44 @@ scored["scored_at"] = str(RUN_TS)
 scored["signing_date"] = df["signing_date"].astype(str).values
 scored["loan_state"] = df["loan_state"].values
 scored["is_bad"] = df["is_bad"].values
-scored["fico"] = df["fico"].values if "fico" in df.columns else None
+scored["fico"] = df["experian_FICO_SCORE"].values if "experian_FICO_SCORE" in df.columns else None
 scored["qi"] = df["shop_qi"].values if "shop_qi" in df.columns else None
 scored["partner"] = df["partner"].values if "partner" in df.columns else None
 
-# v6 shadow scores
-scored["shadow_pd"] = results["pd"].values.astype(float)
-scored["shadow_grade"] = results["grade"].values
-scored["shadow_decision"] = results["decision"].apply(
+# Shadow scores (original pipeline cascade)
+scored["shadow_decision_v1"] = results["decision"].apply(
     lambda d: d.capitalize() if isinstance(d, str) else d).values
+scored["shadow_fraud_score"] = results["fraud_score"].values.astype(float)
 scored["shadow_fraud_decision"] = results["fraud_decision"].values
-scored["fraud_rules_triggered"] = results["fraud_rules_triggered"].values
+scored["shadow_pd"] = results["pd"].values.astype(float)
+scored["shadow_woe_pd"] = results["woe_pd"].values.astype(float) if "woe_pd" in results.columns else 0.0
+scored["shadow_xgb_pd"] = results["xgb_pd"].values.astype(float) if "xgb_pd" in results.columns else 0.0
+scored["shadow_grade"] = results["grade"].values
+scored["shadow_pricing_tier"] = results["pricing_tier"].values.astype(float)
+
+# Optimized decision (FICO-conditional combined score, from Ralph loop 3)
+try:
+    from decision_config import compute_combined_score, should_flag, get_fico_bucket, FICO_THRESHOLDS
+    fico_vals = df["experian_FICO_SCORE"].values if "experian_FICO_SCORE" in df.columns else np.full(len(df), 650.0)
+    woe_vals = results["woe_pd"].values.astype(float) if "woe_pd" in results.columns else results["pd"].values.astype(float)
+    rule_vals = results["rule_pd"].values.astype(float) if "rule_pd" in results.columns else results["pd"].values.astype(float)
+    xgb_vals = results["xgb_pd"].values.astype(float) if "xgb_pd" in results.columns else results["pd"].values.astype(float)
+    fraud_vals = results["fraud_score"].values.astype(float)
+
+    combined_scores = np.array([
+        compute_combined_score(w, r, x, f)
+        for w, r, x, f in zip(woe_vals, rule_vals, xgb_vals, fraud_vals)
+    ])
+    optimized_flags = np.array([
+        should_flag(w, r, x, f, fi)
+        for w, r, x, f, fi in zip(woe_vals, rule_vals, xgb_vals, fraud_vals, fico_vals)
+    ])
+    scored["shadow_combined_score"] = combined_scores
+    scored["shadow_decision"] = np.where(optimized_flags, "Flag", "Approve")
+except Exception as e:
+    print(f"[{RUN_ID}] WARNING: Optimized decision failed ({e}), using v1 cascade")
+    scored["shadow_combined_score"] = scored["shadow_pd"]
+    scored["shadow_decision"] = scored["shadow_decision_v1"]
 
 # Production reference
 scored["prod_grade"] = df["prod_grade"].values
@@ -225,6 +260,7 @@ print(f"[{RUN_ID}] Wrote {len(scored):,} rows to {SCORES_TABLE}")
 n_bad = int(scored["is_bad"].sum())
 n = len(scored)
 
+# Compute metrics if enough data with both classes
 auc_val = None
 ap_val = None
 mcc_val = None
@@ -237,20 +273,23 @@ if n > 50 and scored["is_bad"].nunique() > 1:
     try:
         from sklearn.metrics import (
             roc_auc_score, average_precision_score, cohen_kappa_score,
-            matthews_corrcoef, fbeta_score
+            matthews_corrcoef, fbeta_score, brier_score_loss
         )
 
         y_true = scored["is_bad"].values
         y_pd = scored["shadow_pd"].values
         shadow_flag = (scored["shadow_decision"].isin(["Review", "Decline"])).astype(int).values
 
+        # Ranking metrics
         auc_val = round(float(roc_auc_score(y_true, y_pd)), 4)
         ap_val = round(float(average_precision_score(y_true, y_pd)), 4)
+
+        # Decision metrics (flag = review + decline)
         mcc_val = round(float(matthews_corrcoef(y_true, shadow_flag)), 4)
         kappa_val = round(float(cohen_kappa_score(y_true, shadow_flag)), 4)
         f2_val = round(float(fbeta_score(y_true, shadow_flag, beta=2, zero_division=0)), 4)
 
-        # ECE
+        # Calibration: Expected Calibration Error
         n_bins = 10
         bin_edges = np.linspace(0, 1, n_bins + 1)
         ece_sum = 0.0
@@ -260,7 +299,7 @@ if n > 50 and scored["is_bad"].nunique() > 1:
                 ece_sum += (mask.sum() / len(y_true)) * abs(y_true[mask].mean() - y_pd[mask].mean())
         ece_val = round(ece_sum, 4)
 
-        # Grade agreement
+        # Shadow grade vs production grade
         if "prod_grade_letter" in scored.columns:
             valid = scored.dropna(subset=["shadow_grade", "prod_grade_letter"])
             if len(valid) > 50:
@@ -269,7 +308,7 @@ if n > 50 and scored["is_bad"].nunique() > 1:
                     valid["shadow_grade"].values
                 )), 4)
 
-        # Lift
+        # Lift at top decile
         df_lift = pd.DataFrame({"y": y_true, "pd": y_pd})
         df_lift["decile"] = pd.qcut(df_lift["pd"], 10, labels=False, duplicates="drop")
         top_dec = df_lift[df_lift["decile"] == df_lift["decile"].max()]
@@ -295,9 +334,10 @@ log_entry = {
     "ece_this_batch": ece_val,
     "lift_top_decile": lift_top_val,
     "decisions_approve": int((scored["shadow_decision"] == "Approve").sum()),
-    "decisions_review": int((scored["shadow_decision"] == "Review").sum()),
-    "decisions_decline": int((scored["shadow_decision"] == "Decline").sum()),
-    "pipeline_version": "v6.0",
+    "decisions_flag": int((scored["shadow_decision"] == "Flag").sum()),
+    "decisions_v1_approve": int((scored["shadow_decision_v1"] == "Approve").sum()),
+    "decisions_v1_review": int((scored["shadow_decision_v1"] == "Review").sum()),
+    "decisions_v1_decline": int((scored["shadow_decision_v1"] == "Decline").sum()),
     "status": "OK",
 }
 
@@ -308,20 +348,31 @@ log_df.write.mode("append").saveAsTable(LOG_TABLE)
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'=' * 60}")
-print(f"  SHADOW MICRO-BATCH v6.0 — {RUN_ID}")
+print(f"  SHADOW MICRO-BATCH COMPLETE — {RUN_ID}")
 print(f"{'=' * 60}")
 print(f"  New applications scored: {n:,}")
 print(f"  Cumulative scored:       {len(scored_ids) + n:,}")
-print(f"  Approve={log_entry['decisions_approve']}, Review={log_entry['decisions_review']}, "
-      f"Decline={log_entry['decisions_decline']}")
+print(f"  Optimized: Approve={log_entry['decisions_approve']}, Flag={log_entry['decisions_flag']}")
+print(f"  Original:  Approve={log_entry['decisions_v1_approve']}, "
+      f"Review={log_entry['decisions_v1_review']}, Decline={log_entry['decisions_v1_decline']}")
 if n_bad > 0:
     print(f"  Bad rate (this batch): {n_bad/n:.1%}")
 if auc_val:
     print(f"  AUC:               {auc_val}")
+if ap_val:
+    base_rate = round(n_bad / max(n, 1), 4)
+    ap_lift = round(ap_val / max(base_rate, 0.001), 1)
+    print(f"  Avg Precision:     {ap_val}  ({ap_lift}x random)")
 if mcc_val is not None:
     print(f"  MCC:               {mcc_val}")
+if f2_val is not None:
+    print(f"  F2-Score:          {f2_val}")
+if kappa_val is not None:
+    print(f"  Kappa (decision):  {kappa_val}")
 if ece_val is not None:
     print(f"  ECE (calibration): {ece_val}")
+if kappa_grade_val is not None:
+    print(f"  Kappa (vs prod):   {kappa_grade_val}")
 if lift_top_val:
     print(f"  Lift @ top decile: {lift_top_val}x")
 print(f"  Results in: {SCORES_TABLE}")
@@ -329,19 +380,25 @@ print(f"  Log in:     {LOG_TABLE}")
 print(f"{'=' * 60}")
 
 # ---------------------------------------------------------------------------
-# 7. Vintage Performance Tracking
+# 7. Vintage Performance Tracking (safe — cannot break scoring above)
 # ---------------------------------------------------------------------------
+# Re-checks current loan states for all previously scored loans.
+# Tracks state transitions, early defaults, and DWOP by shadow grade.
+# Writes to george_sandbox.shadow_vintage for ongoing monitoring.
+
 VINTAGE_TABLE = f"{SHADOW_CATALOG}.{SHADOW_SCHEMA}.shadow_vintage"
 
 try:
     print(f"\n[{RUN_ID}] Running vintage performance check...")
 
+    # Get current states for all scored loans
     vintage_query = f"""
     SELECT
         s.application_id,
         s.shadow_grade,
         s.shadow_pd,
         s.shadow_decision,
+        s.shadow_fraud_score,
         s.signing_date as original_signing_date,
         s.loan_state as state_at_scoring,
         s.is_bad as was_bad_at_scoring,
@@ -367,6 +424,7 @@ try:
     vintage_df = spark.sql(vintage_query).toPandas()
 
     if len(vintage_df) > 0:
+        # Compute vintage stats by shadow grade
         vintage_stats = []
         for grade in sorted(vintage_df["shadow_grade"].dropna().unique()):
             g = vintage_df[vintage_df["shadow_grade"] == grade]
@@ -387,9 +445,11 @@ try:
             }
             vintage_stats.append(stats)
 
+        # Write vintage stats to Delta
         vintage_spark = spark.createDataFrame(vintage_stats)
         vintage_spark.write.mode("append").saveAsTable(VINTAGE_TABLE)
 
+        # Print vintage summary
         print(f"\n  --- Vintage Performance (current states) ---")
         print(f"  {'Grade':<7} {'Loans':>6} {'Bad Now':>8} {'Rate':>7} {'DWOP':>5} {'FPD':>4} {'90d':>4} {'Age':>5}")
         print(f"  {'-----':<7} {'-----':>6} {'-------':>8} {'----':>7} {'----':>5} {'---':>4} {'---':>4} {'---':>5}")
@@ -404,8 +464,9 @@ try:
         if total_loans > 0:
             print(f"  {'TOTAL':<7} {total_loans:>6,} {total_bad_now:>8,} {total_bad_now/total_loans:>7.1%}")
 
+        # Check if bad rates are monotonic by grade (A < B < C < D < E)
         grade_rates = {s["shadow_grade"]: s["bad_rate_now"] for s in vintage_stats}
-        grade_order = ["A", "B", "C", "D"]
+        grade_order = ["A", "B", "C", "D", "E"]
         rates_in_order = [grade_rates.get(g, 0) for g in grade_order if g in grade_rates]
         is_monotonic = all(rates_in_order[i] <= rates_in_order[i+1] for i in range(len(rates_in_order)-1))
         print(f"\n  Grade monotonicity: {'PASS' if is_monotonic else 'FAIL'} "
@@ -416,4 +477,5 @@ try:
         print(f"  No vintage data available yet")
 
 except Exception as e:
+    # Vintage tracking is optional — never break the scoring job
     print(f"[{RUN_ID}] Vintage tracking skipped: {e}")
